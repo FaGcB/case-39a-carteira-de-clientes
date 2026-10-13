@@ -1,0 +1,61 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: carteira
+      POSTGRES_PASSWORD: carteira
+      POSTGRES_DB: carteira
+    ports:
+      - "5432:5432"
+    volumes:
+      - dados:/var/lib/postgresql/data
+      - ./backend/scripts/banco-de-testes.sql:/docker-entrypoint-initdb.d/banco-de-testes.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U carteira -d carteira"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    build: ./backend
+    command: ["alembic", "upgrade", "head"]
+    environment: &ambiente
+      DATABASE_URL: postgresql+psycopg://carteira:carteira@db:5432/carteira
+      TEST_DATABASE_URL: postgresql+psycopg://carteira:carteira@db:5432/carteira_teste
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: ./backend
+    environment: *ambiente
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/saude')"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    build: ./backend
+    command: ["python", "-m", "app.worker"]
+    environment: *ambiente
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 30s
+
+  web:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  dados:
